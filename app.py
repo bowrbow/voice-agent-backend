@@ -2,42 +2,88 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests
 import os
+import json
+import time
+from datetime import datetime
+import pytz
 
 # Initialize Flask app
 app = Flask(__name__)
 # Enable CORS for all routes - critical for Elevenlabs to call your API
 CORS(app)
 
+# Configure custom logging
+def log_divider(title):
+    line_length = 80
+    padding = (line_length - len(title) - 2) // 2
+    print("\n" + "=" * padding + f" {title} " + "=" * padding + "\n")
+
+def log_request(endpoint, data):
+    log_divider(f"INCOMING REQUEST TO {endpoint}")
+    print(f"Timestamp: {datetime.now().strftime('%H:%M:%S.%f')[:-3]}")
+    print(f"Request data: {json.dumps(data, indent=2)}")
+
+def log_api_call(service, url, params=None):
+    log_divider(f"CALLING {service} API")
+    print(f"URL: {url}")
+    if params:
+        print(f"Parameters: {json.dumps(params, indent=2)}")
+
+def log_api_response(service, response_data, status_code):
+    log_divider(f"{service} API RESPONSE")
+    print(f"Status code: {status_code}")
+    print(f"Response: {json.dumps(response_data, indent=2) if isinstance(response_data, dict) else response_data[:500]}")
+
+def log_response(endpoint, response_data, success):
+    log_divider(f"OUTGOING RESPONSE FROM {endpoint}")
+    print(f"Success: {success}")
+    print(f"Response data: {json.dumps(response_data, indent=2)}")
+
 @app.route('/health', methods=['GET'])
 def health_check():
     """Simple health check endpoint to verify the service is running"""
+    print("\n✅ Health check endpoint called")
     return jsonify({"status": "healthy", "message": "Voice agent backend is running!"})
 
 @app.route('/search', methods=['POST'])
 def web_search():
-    """Web search endpoint that queries Google and parses results"""
+    """Web search endpoint that queries Wikipedia and parses results"""
     try:
-        # Get the search query from the request
+        # Log incoming request
         data = request.json
+        log_request("SEARCH", data)
+        
         if not data or 'query' not in data:
-            return jsonify({
-                "success": False, 
-                "error": "Please provide a search query"
-            }), 400
+            error_response = {"success": False, "error": "Please provide a search query"}
+            log_response("SEARCH", error_response, False)
+            return jsonify(error_response), 400
         
         query = data['query']
         
-        # Use a more reliable approach - searching Wikipedia
+        # Build Wikipedia API URL
+        wiki_url = f"https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch={query}&format=json&utf8="
+        
+        # Log API call
+        log_api_call("WIKIPEDIA", wiki_url)
+        
+        # Call Wikipedia API
+        start_time = time.time()
         response = requests.get(
-            f"https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch={query}&format=json&utf8=",
+            wiki_url,
             headers={"User-Agent": "VoiceAgentDemo/1.0"}
         )
+        api_time = time.time() - start_time
+        
+        # Log API response
+        log_api_response("WIKIPEDIA", response.json(), response.status_code)
         
         if response.status_code != 200:
-            return jsonify({
+            error_response = {
                 "success": False,
                 "error": f"Search API returned status code {response.status_code}"
-            }), 500
+            }
+            log_response("SEARCH", error_response, False)
+            return jsonify(error_response), 500
         
         # Parse the results
         results = response.json()
@@ -61,29 +107,34 @@ def web_search():
         else:
             voice_response = "I couldn't find any information about that. Would you like to try a different search?"
         
-        return jsonify({
-            "success": True,
-            "results": voice_response
-        })
+        # Log successful response
+        success_response = {"success": True, "results": voice_response}
+        log_response("SEARCH", {"success": True, "results": voice_response[:100] + "..." if len(voice_response) > 100 else voice_response}, True)
+        print(f"⏱️ Wikipedia API call took {api_time:.2f} seconds")
+        
+        return jsonify(success_response)
     
     except Exception as e:
-        print(f"Error processing search request: {str(e)}")
-        return jsonify({
+        print(f"❌ ERROR in search endpoint: {str(e)}")
+        error_response = {
             "success": False,
             "error": "Sorry, I had trouble searching for that information."
-        }), 500
+        }
+        log_response("SEARCH", error_response, False)
+        return jsonify(error_response), 500
 
 @app.route('/weather', methods=['POST'])
 def weather():
     """Weather endpoint using OpenWeatherMap API"""
     try:
-        # Get the location from the request
+        # Log incoming request
         data = request.json
+        log_request("WEATHER", data)
+        
         if not data or 'location' not in data:
-            return jsonify({
-                "success": False, 
-                "error": "Please provide a location"
-            }), 400
+            error_response = {"success": False, "error": "Please provide a location"}
+            log_response("WEATHER", error_response, False)
+            return jsonify(error_response), 400
         
         location = data['location']
         
@@ -91,21 +142,31 @@ def weather():
         api_key = os.environ.get('OPENWEATHER_API_KEY')
         
         if not api_key:
-            return jsonify({
-                "success": False,
-                "error": "Weather API key not configured"
-            }), 500
+            error_response = {"success": False, "error": "Weather API key not configured"}
+            log_response("WEATHER", error_response, False)
+            return jsonify(error_response), 500
+        
+        # Build OpenWeatherMap API URL
+        weather_url = f"https://api.openweathermap.org/data/2.5/weather?q={location}&appid={api_key}&units=metric"
+        
+        # Log API call (hide API key for security)
+        log_api_call("OPENWEATHERMAP", weather_url.replace(api_key, "API_KEY_HIDDEN"))
         
         # Call OpenWeatherMap API
-        response = requests.get(
-            f"https://api.openweathermap.org/data/2.5/weather?q={location}&appid={api_key}&units=metric"
-        )
+        start_time = time.time()
+        response = requests.get(weather_url)
+        api_time = time.time() - start_time
+        
+        # Log API response
+        log_api_response("OPENWEATHERMAP", response.json(), response.status_code)
         
         if response.status_code != 200:
-            return jsonify({
+            error_response = {
                 "success": False,
                 "error": f"Weather API returned status code {response.status_code}"
-            }), 500
+            }
+            log_response("WEATHER", error_response, False)
+            return jsonify(error_response), 500
         
         # Parse weather data
         weather_data = response.json()
@@ -117,28 +178,34 @@ def weather():
         
         voice_response = f"The current weather in {city} is {condition} with a temperature of {temp} degrees Celsius."
         
-        return jsonify({
-            "success": True,
-            "results": voice_response
-        })
+        # Log successful response
+        success_response = {"success": True, "results": voice_response}
+        log_response("WEATHER", success_response, True)
+        print(f"⏱️ Weather API call took {api_time:.2f} seconds")
+        
+        return jsonify(success_response)
     
     except Exception as e:
-        print(f"Error processing weather request: {str(e)}")
-        return jsonify({
+        print(f"❌ ERROR in weather endpoint: {str(e)}")
+        error_response = {
             "success": False,
             "error": "Sorry, I had trouble getting the weather information."
-        }), 500
+        }
+        log_response("WEATHER", error_response, False)
+        return jsonify(error_response), 500
     
 @app.route('/time', methods=['POST'])
 def world_clock():
     """Get the current time in any location around the world"""
     try:
+        # Log incoming request
         data = request.json
+        log_request("TIME", data)
+        
         if not data or 'location' not in data:
-            return jsonify({
-                "success": False, 
-                "error": "Please provide a location"
-            }), 400
+            error_response = {"success": False, "error": "Please provide a location"}
+            log_response("TIME", error_response, False)
+            return jsonify(error_response), 400
         
         location = data['location']
         
@@ -176,48 +243,80 @@ def world_clock():
         # Handle case sensitivity
         location_lower = location.lower()
         
-        # Try to find the timezone
-        from datetime import datetime
-        import pytz
+        # Log timezone lookup process
+        start_time = time.time()
+        log_divider("TIMEZONE LOOKUP")
         
+        found_timezone = None
+        timezone_source = None
+        
+        # Try to find the timezone in our map
         if location_lower in timezone_map:
             timezone_str = timezone_map[location_lower]
-            timezone = pytz.timezone(timezone_str)
+            found_timezone = timezone_str
+            timezone_source = "predefined map"
+            print(f"✅ Found timezone for '{location}' in predefined map: {timezone_str}")
+        else:
+            # Try to guess the timezone using pytz
+            print(f"⚠️ '{location}' not found in predefined map, searching pytz timezones...")
+            
+            for tz_name in pytz.all_timezones:
+                if location_lower in tz_name.lower():
+                    found_timezone = tz_name
+                    timezone_source = "pytz search"
+                    print(f"✅ Found matching timezone in pytz: {tz_name}")
+                    break
+            
+            if not found_timezone:
+                print(f"❌ No matching timezone found for '{location}'")
+        
+        lookup_time = time.time() - start_time
+        print(f"⏱️ Timezone lookup took {lookup_time:.2f} seconds")
+        
+        if found_timezone:
+            timezone = pytz.timezone(found_timezone)
             current_time = datetime.now(timezone)
             
             # Format time nicely
             formatted_time = current_time.strftime("%I:%M %p on %A, %B %d, %Y")
             
-            return jsonify({
-                "success": True,
-                "results": f"The current time in {location} is {formatted_time}."
-            })
-        else:
-            # Try to guess the timezone using pytz
-            for tz_name in pytz.all_timezones:
-                if location_lower in tz_name.lower():
-                    timezone = pytz.timezone(tz_name)
-                    current_time = datetime.now(timezone)
-                    formatted_time = current_time.strftime("%I:%M %p on %A, %B %d, %Y")
-                    
-                    return jsonify({
-                        "success": True,
-                        "results": f"The current time in {location} is {formatted_time}."
-                    })
+            voice_response = f"The current time in {location} is {formatted_time}."
             
-            return jsonify({
+            # Log successful response
+            success_response = {"success": True, "results": voice_response}
+            log_response("TIME", success_response, True)
+            print(f"🌐 Timezone: {found_timezone} (found via {timezone_source})")
+            
+            return jsonify(success_response)
+        else:
+            error_response = {
                 "success": False,
                 "error": f"I couldn't find a timezone for {location}. Try a major city name instead."
-            }), 404
+            }
+            log_response("TIME", error_response, False)
+            return jsonify(error_response), 404
             
     except Exception as e:
-        print(f"Error processing time request: {str(e)}")
-        return jsonify({
+        print(f"❌ ERROR in time endpoint: {str(e)}")
+        error_response = {
             "success": False,
             "error": f"Sorry, I had trouble getting the time: {str(e)}"
-        }), 500
+        }
+        log_response("TIME", error_response, False)
+        return jsonify(error_response), 500
 
 if __name__ == '__main__':
+    # Print startup banner
+    print("\n" + "=" * 80)
+    print(" 🎙️  VOICE AGENT BACKEND SERVER STARTING  🎙️ ")
+    print("=" * 80)
+    print(" ℹ️  This server provides API endpoints for Elevenlabs voice agents")
+    print(" 🔍 /search - Search for information using Wikipedia")
+    print(" ⛅ /weather - Get weather information for any location")
+    print(" 🕒 /time - Get current time in any timezone")
+    print("=" * 80 + "\n")
+    
     # Get port from environment variable (for Render deployment)
     port = int(os.environ.get('PORT', 5000))
+    print(f"🚀 Starting server on port {port}...")
     app.run(host='0.0.0.0', port=port)
