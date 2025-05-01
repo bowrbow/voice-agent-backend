@@ -6,11 +6,86 @@ import json
 import time
 from datetime import datetime
 import pytz
+from functools import wraps
+import threading
 
 # Initialize Flask app
 app = Flask(__name__)
 # Enable CORS for all routes - critical for Elevenlabs to call your API
 CORS(app)
+
+# Simple in-memory rate limiter
+class RateLimiter:
+    def __init__(self):
+        self.requests = {}
+        self.lock = threading.Lock()
+    
+    def is_rate_limited(self, key, limit=20, period=60):
+        with self.lock:
+            now = time.time()
+            
+            # Clean up expired entries
+            self.requests = {k: v for k, v in self.requests.items() if v['timestamp'] > now - period}
+            
+            # If key doesn't exist yet
+            if key not in self.requests:
+                self.requests[key] = {
+                    'count': 1,
+                    'timestamp': now
+                }
+                return False
+            
+            # Check if limit exceeded
+            if self.requests[key]['count'] >= limit:
+                return True
+            
+            # Increment counter
+            self.requests[key]['count'] += 1
+            return False
+
+# Initialize rate limiter
+rate_limiter = RateLimiter()
+
+# API Key validation decorator
+def validate_api_key(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        # Get API key from request header
+        api_key = request.headers.get('X-API-Key')
+        
+        # Get valid API keys from environment variable
+        valid_api_keys = os.environ.get('ALLOWED_API_KEYS', '').split(',')
+        
+        # Check if API key is valid
+        if not api_key or api_key not in valid_api_keys:
+            print(f"❌ Invalid API key attempt: {api_key if api_key else 'No key provided'}")
+            return jsonify({
+                "success": False,
+                "error": "Invalid or missing API key. Join our community to get access: https://example.com/community"
+            }), 401
+        
+        # If API key is valid, proceed
+        return f(*args, **kwargs)
+    return decorated_function
+
+# Rate limiting decorator
+def rate_limit(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        # Get API key for rate limiting
+        key = request.headers.get('X-API-Key') or request.remote_addr
+        
+        # Check if rate limited
+        if rate_limiter.is_rate_limited(key):
+            print(f"⚠️ Rate limit exceeded for: {key}")
+            return jsonify({
+                "success": False,
+                "error": "Rate limit exceeded. Please try again later or upgrade your plan."
+            }), 429
+        
+        # If not rate limited, proceed
+        return f(*args, **kwargs)
+    return decorated_function
 
 # Configure custom logging
 def log_divider(title):
@@ -46,6 +121,8 @@ def health_check():
     return jsonify({"status": "healthy", "message": "Voice agent backend is running!"})
 
 @app.route('/search', methods=['POST'])
+@validate_api_key
+@rate_limit
 def web_search():
     """Web search endpoint that queries Wikipedia and parses results"""
     try:
@@ -124,6 +201,8 @@ def web_search():
         return jsonify(error_response), 500
 
 @app.route('/weather', methods=['POST'])
+@validate_api_key
+@rate_limit
 def weather():
     """Weather endpoint using OpenWeatherMap API"""
     try:
@@ -195,6 +274,8 @@ def weather():
         return jsonify(error_response), 500
     
 @app.route('/time', methods=['POST'])
+@validate_api_key
+@rate_limit
 def world_clock():
     """Get the current time in any location around the world"""
     try:
@@ -305,12 +386,78 @@ def world_clock():
         log_response("TIME", error_response, False)
         return jsonify(error_response), 500
 
+# Add documentation endpoint to explain how to use the API
+@app.route('/', methods=['GET'])
+def docs():
+    """Simple documentation page"""
+    return '''
+    <html>
+        <head>
+            <title>Voice Agent Backend API</title>
+            <style>
+                body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
+                h1 { color: #333; }
+                .endpoint { background: #f5f5f5; padding: 15px; margin: 10px 0; border-radius: 5px; }
+                .method { font-weight: bold; color: #0066cc; }
+                .url { font-family: monospace; }
+                .note { background: #ffffcc; padding: 10px; border-left: 4px solid #ffcc00; }
+            </style>
+        </head>
+        <body>
+            <h1>Voice Agent Backend API</h1>
+            <p>This API provides functionality for Elevenlabs voice agents.</p>
+            
+            <div class="note">
+                <p><strong>Note:</strong> API access requires an API key. Contact the developer to get access.</p>
+            </div>
+            
+            <h2>Authentication</h2>
+            <p>Include your API key in the request headers:</p>
+            <pre>X-API-Key: your_api_key</pre>
+            
+            <h2>Endpoints</h2>
+            
+            <div class="endpoint">
+                <h3><span class="method">POST</span> <span class="url">/search</span></h3>
+                <p>Search for information on a given topic</p>
+                <p><strong>Request Body:</strong></p>
+                <pre>{
+  "query": "voice agents"
+}</pre>
+            </div>
+            
+            <div class="endpoint">
+                <h3><span class="method">POST</span> <span class="url">/weather</span></h3>
+                <p>Get current weather for a location</p>
+                <p><strong>Request Body:</strong></p>
+                <pre>{
+  "location": "London"
+}</pre>
+            </div>
+            
+            <div class="endpoint">
+                <h3><span class="method">POST</span> <span class="url">/time</span></h3>
+                <p>Get the current time in any location around the world</p>
+                <p><strong>Request Body:</strong></p>
+                <pre>{
+  "location": "Tokyo"
+}</pre>
+            </div>
+            
+            <h2>Rate Limits</h2>
+            <p>All API endpoints are rate limited to 20 requests per minute per API key.</p>
+        </body>
+    </html>
+    '''
+
 if __name__ == '__main__':
     # Print startup banner
     print("\n" + "=" * 80)
     print(" 🎙️  VOICE AGENT BACKEND SERVER STARTING  🎙️ ")
     print("=" * 80)
     print(" ℹ️  This server provides API endpoints for Elevenlabs voice agents")
+    print(" 🔐 API Key Authentication enabled")
+    print(" ⏱️  Rate limiting enabled (20 requests per minute per key)")
     print(" 🔍 /search - Search for information using Wikipedia")
     print(" ⛅ /weather - Get weather information for any location")
     print(" 🕒 /time - Get current time in any timezone")
