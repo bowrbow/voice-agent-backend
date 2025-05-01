@@ -8,11 +8,222 @@ from datetime import datetime
 import pytz
 from functools import wraps
 import threading
+from flask_swagger_ui import get_swaggerui_blueprint
 
 # Initialize Flask app
 app = Flask(__name__)
 # Enable CORS for all routes - critical for Elevenlabs to call your API
 CORS(app)
+
+# Configure Swagger UI
+SWAGGER_URL = '/docs'  # URL for exposing Swagger UI
+API_URL = '/static/swagger.json'  # Our API url (can be a local file or url)
+
+# Call factory function to create our blueprint
+swaggerui_blueprint = get_swaggerui_blueprint(
+    SWAGGER_URL,  # Swagger UI static files will be mapped to '{SWAGGER_URL}/dist/'
+    API_URL,
+    config={  # Swagger UI config overrides
+        'app_name': "Voice Agent API Documentation"
+    }
+)
+
+# Register blueprint at URL
+app.register_blueprint(swaggerui_blueprint, url_prefix=SWAGGER_URL)
+
+# Ensure the static folder exists
+os.makedirs(os.path.join(app.root_path, 'static'), exist_ok=True)
+
+# Create the swagger.json file
+swagger_json = {
+    "openapi": "3.0.0",
+    "info": {
+        "title": "Voice Agent Backend API",
+        "description": "API for Elevenlabs Voice Agents",
+        "version": "1.0.0"
+    },
+    "servers": [
+        {
+            "url": "/"
+        }
+    ],
+    "components": {
+        "securitySchemes": {
+            "ApiKeyAuth": {
+                "type": "apiKey",
+                "in": "header",
+                "name": "X-API-Key"
+            }
+        }
+    },
+    "security": [
+        {
+            "ApiKeyAuth": []
+        }
+    ],
+    "paths": {
+        "/search": {
+            "post": {
+                "summary": "Search for information",
+                "description": "Search the web for information on a given topic",
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object",
+                                "properties": {
+                                    "query": {
+                                        "type": "string",
+                                        "description": "The search query"
+                                    }
+                                },
+                                "required": ["query"]
+                            },
+                            "example": {
+                                "query": "voice agents"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Successful search",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "success": {
+                                            "type": "boolean"
+                                        },
+                                        "results": {
+                                            "type": "string"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized - Invalid or missing API key"
+                    },
+                    "429": {
+                        "description": "Too Many Requests - Rate limit exceeded"
+                    }
+                }
+            }
+        },
+        "/weather": {
+            "post": {
+                "summary": "Get current weather",
+                "description": "Get current weather for a location",
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object",
+                                "properties": {
+                                    "location": {
+                                        "type": "string",
+                                        "description": "The city or location name"
+                                    }
+                                },
+                                "required": ["location"]
+                            },
+                            "example": {
+                                "location": "London"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Successful weather retrieval",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "success": {
+                                            "type": "boolean"
+                                        },
+                                        "results": {
+                                            "type": "string"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized - Invalid or missing API key"
+                    },
+                    "429": {
+                        "description": "Too Many Requests - Rate limit exceeded"
+                    }
+                }
+            }
+        },
+        "/time": {
+            "post": {
+                "summary": "Get current time",
+                "description": "Get the current time in any location around the world",
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object",
+                                "properties": {
+                                    "location": {
+                                        "type": "string",
+                                        "description": "The city or location name"
+                                    }
+                                },
+                                "required": ["location"]
+                            },
+                            "example": {
+                                "location": "Tokyo"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Successful time retrieval",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "success": {
+                                            "type": "boolean"
+                                        },
+                                        "results": {
+                                            "type": "string"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized - Invalid or missing API key"
+                    },
+                    "429": {
+                        "description": "Too Many Requests - Rate limit exceeded"
+                    }
+                }
+            }
+        }
+    }
+}
+
+# Write the swagger.json file
+with open(os.path.join(app.root_path, 'static', 'swagger.json'), 'w') as f:
+    json.dump(swagger_json, f)
 
 # Simple in-memory rate limiter
 class RateLimiter:
@@ -386,66 +597,34 @@ def world_clock():
         log_response("TIME", error_response, False)
         return jsonify(error_response), 500
 
-# Add documentation endpoint to explain how to use the API
+# Add simple landing page that redirects to docs
 @app.route('/', methods=['GET'])
-def docs():
-    """Simple documentation page"""
+def index():
+    """Landing page that redirects to interactive docs"""
     return '''
     <html>
         <head>
             <title>Voice Agent Backend API</title>
             <style>
-                body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
+                body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; text-align: center; }
                 h1 { color: #333; }
-                .endpoint { background: #f5f5f5; padding: 15px; margin: 10px 0; border-radius: 5px; }
-                .method { font-weight: bold; color: #0066cc; }
-                .url { font-family: monospace; }
-                .note { background: #ffffcc; padding: 10px; border-left: 4px solid #ffcc00; }
+                .card { background: #f5f5f5; padding: 20px; margin: 20px 0; border-radius: 5px; }
+                .button { display: inline-block; background: #0066cc; color: white; padding: 10px 20px; 
+                          text-decoration: none; border-radius: 5px; font-weight: bold; margin-top: 20px; }
+                .note { background: #ffffcc; padding: 10px; border-left: 4px solid #ffcc00; text-align: left; }
             </style>
         </head>
         <body>
             <h1>Voice Agent Backend API</h1>
-            <p>This API provides functionality for Elevenlabs voice agents.</p>
+            <div class="card">
+                <p>This API provides functionality for Elevenlabs voice agents including web search, weather information, and world clock.</p>
+                <a href="/docs" class="button">Interactive API Documentation</a>
+            </div>
             
             <div class="note">
                 <p><strong>Note:</strong> API access requires an API key. Contact the developer to get access.</p>
+                <p>All endpoints are rate limited to 20 requests per minute per API key.</p>
             </div>
-            
-            <h2>Authentication</h2>
-            <p>Include your API key in the request headers:</p>
-            <pre>X-API-Key: your_api_key</pre>
-            
-            <h2>Endpoints</h2>
-            
-            <div class="endpoint">
-                <h3><span class="method">POST</span> <span class="url">/search</span></h3>
-                <p>Search for information on a given topic</p>
-                <p><strong>Request Body:</strong></p>
-                <pre>{
-  "query": "voice agents"
-}</pre>
-            </div>
-            
-            <div class="endpoint">
-                <h3><span class="method">POST</span> <span class="url">/weather</span></h3>
-                <p>Get current weather for a location</p>
-                <p><strong>Request Body:</strong></p>
-                <pre>{
-  "location": "London"
-}</pre>
-            </div>
-            
-            <div class="endpoint">
-                <h3><span class="method">POST</span> <span class="url">/time</span></h3>
-                <p>Get the current time in any location around the world</p>
-                <p><strong>Request Body:</strong></p>
-                <pre>{
-  "location": "Tokyo"
-}</pre>
-            </div>
-            
-            <h2>Rate Limits</h2>
-            <p>All API endpoints are rate limited to 20 requests per minute per API key.</p>
         </body>
     </html>
     '''
@@ -458,6 +637,7 @@ if __name__ == '__main__':
     print(" ℹ️  This server provides API endpoints for Elevenlabs voice agents")
     print(" 🔐 API Key Authentication enabled")
     print(" ⏱️  Rate limiting enabled (20 requests per minute per key)")
+    print(" 📚 Interactive API docs available at /docs")
     print(" 🔍 /search - Search for information using Wikipedia")
     print(" ⛅ /weather - Get weather information for any location")
     print(" 🕒 /time - Get current time in any timezone")
