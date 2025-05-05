@@ -272,7 +272,7 @@ def validate_api_key(f):
             print(f"❌ Invalid API key attempt: {api_key if api_key else 'No key provided'}")
             return jsonify({
                 "success": False,
-                "error": "Invalid or missing API key. Join our community to get access: https://example.com/community"
+                "error": "Invalid or missing API key. Join our community to get access: https://www.skool.com/ai-freedom-finders"
             }), 401
         
         # If API key is valid, proceed
